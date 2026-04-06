@@ -3,6 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import h5py
 import pyvista as pv
+import glob
 
 from openEMS import openEMS
 from openEMS.physical_constants import *
@@ -157,16 +158,42 @@ print("Symulacja zakończona")
 # =========================
 # WCZYTANIE VTK
 # =========================
-file_vtr = Sim_Path + '/Efield_0000000000.vtr'
+
+files = sorted(glob.glob('sim_plot/Efield_*.vtr'))
+file_vtr = files[-1]   # ostatni timestep
+
+print("Używam pliku:", file_vtr)
 mesh_vtk = pv.read(file_vtr)
+# file_vtr = Sim_Path + '/Efield_0000000000.vtr'
+# mesh_vtk = pv.read(file_vtr)
 
 print("Dostępne pola:", mesh_vtk.array_names)
+
 
 # =========================
 # POLE E
 # =========================
 E = mesh_vtk['E-Field']   # wektor [Ex, Ey, Ez]
 E_mag = np.linalg.norm(E, axis=1)
+
+
+# =========================
+# SKALOWANIE DO MOCY NADAJNIKA
+# =========================
+P_tx = 25       # moc nadajnika [W]
+R_port = 50     # impedancja portu [Ohm]
+
+# RMS i peak dla tej mocy
+V_rms = np.sqrt(P_tx * R_port)
+V_peak = V_rms * np.sqrt(2)
+
+# Skala pola - zakładamy, że symulacja daje jednostkowe pobudzenie
+scale = V_peak / 1.0
+print(f"Skalowanie pola do {P_tx} W: {scale:.3f}")
+
+# Skaluje E i gęstość mocy
+E_mag = E_mag * scale
+
 
 points = mesh_vtk.points
 xv = points[:,0]
@@ -193,22 +220,69 @@ S2 = S[mask]
 # WYKRES E
 # =========================
 plt.figure(figsize=(8,6))
+
 plt.tricontourf(x2, y2, E2, levels=50)
 plt.colorbar(label='E [V/m]')
+
+# =========================
+# GRANICE POKOJU
+# =========================
+plt.plot([-2, 2, 2, -2, -2], [0, 0, 2.5, 2.5, 0], 'white', linewidth=2)
+
+# =========================
+# ŚCIANA (beton)
+# =========================
+plt.plot([-2, 2], [2.5, 2.5], 'cyan', linewidth=3, label='Ściana')
+
+# =========================
+# OKNO
+# =========================
+plt.plot([-0.5, 0.5, 0.5, -0.5, -0.5],
+         [2.5, 2.5, 2.75, 2.75, 2.5],
+         'green', linewidth=3, label='Okno')
+
+# =========================
+# ANTENA
+# =========================
+plt.scatter(antenna_x, antenna_y, c='blue', s=50, label='Antena')
+
+plt.legend()
 plt.title('Pole E (1.5 m)')
 plt.xlabel('X [m]')
 plt.ylabel('Y [m]')
+plt.xlim(-2.2, 2.2)
+plt.ylim(0, 4.0)
+
 plt.show()
 
 # =========================
 # WYKRES S
 # =========================
 plt.figure(figsize=(8,6))
+
 plt.tricontourf(x2, y2, S2, levels=50)
 plt.colorbar(label='S [W/m²]')
-plt.title('Gęstość mocy')
+
+# pokój
+plt.plot([-2, 2, 2, -2, -2], [0, 0, 2.5, 2.5, 0], 'white', linewidth=2)
+
+# ściana
+plt.plot([-2, 2], [2.5, 2.5], 'cyan', linewidth=3)
+
+# okno
+plt.plot([-0.5, 0.5, 0.5, -0.5, -0.5],
+         [2.5, 2.5, 2.75, 2.75, 2.5],
+         'green', linewidth=3)
+
+# antena
+plt.scatter(antenna_x, antenna_y, c='blue', s=50)
+
+plt.title('Gęstość mocy (1.5 m)')
 plt.xlabel('X [m]')
 plt.ylabel('Y [m]')
+plt.xlim(-2.2, 2.2)
+plt.ylim(0, 4.0)
+
 plt.show()
 
 # =========================
