@@ -23,6 +23,7 @@ f0 = 435e6
 c0 = 299792458
 lambda0 = c0 / f0
 dx = lambda0 / 20   # dokładniejsza siatka
+dx_fine = lambda0 / 80
 
 # =========================
 # INICJALIZACJA
@@ -34,93 +35,165 @@ FDTD.SetCSX(CSX)
 mesh = CSX.GetGrid()
 mesh.SetDeltaUnit(1)
 
-x = np.arange(-3, 3, dx)
-y = np.arange(0, 5, dx)
-z = np.arange(0, 3, dx)
 
-mesh.AddLine('x', x)
-mesh.AddLine('y', y)
-mesh.AddLine('z', z)
 
 # =========================
 # MATERIAŁY
 # =========================
 concrete = CSX.AddMaterial('concrete', epsilon=5.0, kappa=0.02)
-glass = CSX.AddMaterial('glass', epsilon=6.0)
-human = CSX.AddMaterial('human', epsilon=52, kappa=1.2)
+glass = CSX.AddMaterial('glass', epsilon=6.0, kappa=0.001)
 metal = CSX.AddMetal('PEC')
 
 # =========================
 # GEOMETRIA
 # =========================
 wall_y = 2.5
+wall_thickness = 0.25
+glass_thickness = 0.006
+pml_margin = 12*dx
+x_min = -2 -pml_margin
+x_max = 2 + pml_margin
+y_min = 0 - pml_margin
+y_max = wall_y + wall_thickness + 2.5 + pml_margin
+z_min = 0 - pml_margin
+z_max = 3.0 + pml_margin
 
-concrete.AddBox(priority=1, start=[-2, 0, 0], stop=[2, 2.5, 0.2])
-concrete.AddBox(priority=1, start=[-2, 0, 2.3], stop=[2, 2.5, 2.5])
-concrete.AddBox(priority=2, start=[-2, wall_y, 0], stop=[2, wall_y+0.25, 2.5])
+x = np.arange(x_min, x_max, dx)
+y = np.arange(y_min, y_max, dx)
+z = np.arange(z_min, z_max, dx)
 
-glass.AddBox(priority=5, start=[-0.5, wall_y, 1], stop=[0.5, wall_y+0.25, 2])
+mesh.AddLine('x', x)
+mesh.AddLine('y', y)
+mesh.AddLine('z', z)
 
-human.AddCylinder(priority=10,
-                  start=[0, 1.0, 0],
-                  stop=[0, 1.0, 1.75],
-                  radius=0.15)
+wall_y_inner = wall_y
+wall_y_outer = wall_y + wall_thickness
+
+glass_y_center = (wall_y_inner + wall_y_outer)/2.0
+glass_y_start = glass_y_center - glass_thickness / 2.0
+glass_y_end = glass_y_center + glass_thickness / 2.0
+
+mesh.AddLine('y', np.arange(wall_y_inner, wall_y_outer, dx_fine))
+mesh.AddLine('y', [glass_y_start, glass_y_end])
+mesh.SmoothMeshLines('y', dx, 1.3)
+
+#=======================
+# Sciany
+# ======================
+
+concrete.AddBox(priority=1, start=[-2, 0, 0], stop=[2, dx, 2.5])
+concrete.AddBox(priority=1, start=[-2, 0, 0], stop=[-2+dx, wall_y, 2.5])
+concrete.AddBox(priority=1, start=[2-dx, 0, 0], stop=[2, wall_y, 2.5])
+concrete.AddBox(priority=1, start=[-2, 0, 0], stop=[2, wall_y, 0.2])
+concrete.AddBox(priority=1, start=[-2, 0, 2.3], stop=[2, wall_y, 2.5])
+concrete.AddBox(priority=1, start=[-2, wall_y_inner, 0], stop=[2, wall_y, 2.5])
+#===================================================
+# Okno
+#===================================================
+glass.AddBox(priority=5, start=[-0.5, glass_y_start, 1.0], stop=[0.5, glass_y_end, 2.0])
+
 
 # =========================
 # ANTENA (1 m nad podłogą)
 # =========================
 antenna_length = 0.625 * lambda0
 
-antenna_x = snap_to_mesh(1.0, x)
-antenna_y = snap_to_mesh(wall_y + 1.5, y)
+antenna_x = 0.0
+antenna_y = wall_y_outer + 1.5
+antenna_length = lambda0 * 5 / 8
 
-antenna_z0 = snap_to_mesh(1.0, z)
-antenna_z1 = snap_to_mesh(1.0 + antenna_length, z)
+mesh.AddLine('x', np.arange(antenna_x - 0.1, antenna_x+0.1, dx_fine))
+mesh.AddLine('y', np.arange(antenna_y - 0.1, antenna_y+0.1, dx_fine))
+mesh.SmoothMeshLines('x', dx, 1.3)
+mesh.SmoothMeshLines('y', dx, 1.3)
 
-metal.AddCylinder(priority=20,
-                  start=[antenna_x, antenna_y, antenna_z0],
-                  stop=[antenna_x, antenna_y, antenna_z1],
-                  radius=0.005)
+#antenna_z0 = 1.0
+#antenna_z1 = antenna_z0 + antenna_length
+#mesh.AddLine('z', [antenna_z0, antenna_z1])
+#mesh.SmoothMeshLines('z', dx, 1.3)
 
+antenna_x_snapped = snap_to_mesh(antenna_x, mesh.GetLines('x'))
+antenna_y_snapped = snap_to_mesh(antenna_y, mesh.GetLines('y'))
+
+#antenna_z0_snapped = snap_to_mesh(antenna_z0, mesh.GetLines('z'))
+#antenna_z1_snapped = snap_to_mesh(antenna_z1, mesh.GetLines('z'))
+
+
+#metal.AddCylinder(priority=20,
+#                  start=[antenna_x_snapped, antenna_y_snapped, antenna_z0_snapped],
+#                  stop=[antenna_x_snapped, antenna_y_snapped, antenna_z1_snapped],
+#                  radius=0.005)
+                  
+mesh.AddLine('z', [1.0])
+mesh.SmoothMeshLines('z', dx, 1.3)
+
+z_lines = mesh.GetLines('z')
+antenna_z0_snapped = snap_to_mesh(1.0, z_lines)
+
+idx = np.where(z_lines == antenna_z0_snapped)[0][0]
+antenna_z1_snapped = z_lines[idx + int(antenna_length/dx)]
+z_feed_0 = antenna_z0_snapped
+z_feed_1 = z_lines[idx + 1]
+# dolna część (do portu)
+metal.AddCylinder(
+    priority=20,
+    start=[antenna_x_snapped, antenna_y_snapped, antenna_z0_snapped],
+    stop=[antenna_x_snapped, antenna_y_snapped, z_feed_0],
+    radius=0.005
+)
+
+# górna część (od portu w górę)
+metal.AddCylinder(
+    priority=20,
+    start=[antenna_x_snapped, antenna_y_snapped, z_feed_1],
+    stop=[antenna_x_snapped, antenna_y_snapped, antenna_z1_snapped],
+    radius=0.005
+)
 # =========================
 # PRZECIWWAGI (radiale)
 # =========================
-radial_len = 0.25
-z_rad = antenna_z0
+radial_len = 0.25 * lambda0
+z_rad = antenna_z0_snapped
+x_lines = mesh.GetLines('x')
+y_lines = mesh.GetLines('y')
 
 metal.AddCylinder(priority=15,
-                  start=[antenna_x, antenna_y, z_rad],
-                  stop=[snap_to_mesh(antenna_x + radial_len, x), antenna_y, z_rad],
+                  start=[antenna_x_snapped, antenna_y_snapped, z_rad],
+                  stop=[snap_to_mesh(antenna_x_snapped + radial_len, x_lines), antenna_y_snapped, z_rad],
                   radius=0.003)
 
 metal.AddCylinder(priority=15,
-                  start=[antenna_x, antenna_y, z_rad],
-                  stop=[snap_to_mesh(antenna_x - radial_len, x), antenna_y, z_rad],
+                  start=[antenna_x_snapped, antenna_y_snapped, z_rad],
+                  stop=[snap_to_mesh(antenna_x_snapped - radial_len, x_lines), antenna_y_snapped, z_rad],
                   radius=0.003)
 
 metal.AddCylinder(priority=15,
-                  start=[antenna_x, antenna_y, z_rad],
-                  stop=[antenna_x, snap_to_mesh(antenna_y + radial_len, y), z_rad],
+                  start=[antenna_x_snapped, antenna_y_snapped, z_rad],
+                  stop=[antenna_x_snapped, snap_to_mesh(antenna_y_snapped + radial_len, y_lines), z_rad],
                   radius=0.003)
 
 metal.AddCylinder(priority=15,
-                  start=[antenna_x, antenna_y, z_rad],
-                  stop=[antenna_x, snap_to_mesh(antenna_y - radial_len, y), z_rad],
+                  start=[antenna_x_snapped, antenna_y_snapped, z_rad],
+                  stop=[antenna_x_snapped, snap_to_mesh(antenna_y_snapped- radial_len, y_lines), z_rad],
                   radius=0.003)
 
 # =========================
 # PORT
 # =========================
-z0 = antenna_z0
-z1 = snap_to_mesh(antenna_z0 + 2*dx, z)
+#z_feed_0 = antenna_z0_snapped
+
+# znajdź NAJBLIŻSZY następny punkt siatki
+#z_lines = mesh.GetLines('z')
+#idx = np.where(z_lines == z_feed_0)[0][0]
+
+#z_feed_1 = z_lines[idx + 1]   # dokładnie 1 komórka!
 
 feed = FDTD.AddLumpedPort(
     CSX,
-    1,
-    [antenna_x, antenna_y, z0],
-    [antenna_x, antenna_y, z1],
-    'z',
-    50
+    1,                # numer portu
+    [antenna_x_snapped, antenna_y_snapped, z_feed_0],
+    [antenna_x_snapped, antenna_y_snapped, z_feed_1],
+    'z',50
 )
 
 # =========================
@@ -131,8 +204,9 @@ FDTD.SetGaussExcite(f0, f0/2)
 # =========================
 # DUMP POLA
 # =========================
-dump = CSX.AddDump('Efield')
-dump.AddBox(start=[-3, 0, 0], stop=[3, 5, 3])
+dump_freq = CSX.AddDump('Efield_freq', dump_type=10, dump_mode=0, file_type=1)
+dump_freq.SetFrequency([f0])
+dump_freq.AddBox(start=[x_min, y_min, z_min], stop=[x_max, y_max, z_max])
 
 # =========================
 # GRANICE
@@ -152,148 +226,82 @@ os.chdir('..')
 # =========================
 # ANALIZA PORTU
 # =========================
-port = feed.CalcPort(Sim_Path, f0)
+port = feed.CalcPort(Sim_Path, np.array([f0]))
+
+z_in = feed.uf_tot/feed.if_tot
+p_in = 0.5 * feed.uf_tot * np.conj(feed.if_tot)
+print(f"Z in @ (f0/1e6:.0f) MHz = {z_in[0]:.1f} Ohm")
+print(f"P_in (symulacja) = {np.real(p_in[0]):.4f} W")
+
 print("Symulacja zakończona")
 
 # =========================
-# WCZYTANIE VTK
+# WCZYTANIE h5
 # =========================
 
-files = sorted(glob.glob('sim_plot/Efield_*.vtr'))
-file_vtr = files[-1]   # ostatni timestep
+h5_files = sorted(glob.glob('sim_plot/Efield_freq*.h5'))
+h5_file = h5_files[0] 
 
-print("Używam pliku:", file_vtr)
-mesh_vtk = pv.read(file_vtr)
-# file_vtr = Sim_Path + '/Efield_0000000000.vtr'
-# mesh_vtk = pv.read(file_vtr)
+with h5py.File(h5_file, 'r') as f:
+    print("Klucze:", list(f.keys()))
+    E_real = np.array(f['FieldData']['FD']['f0_real'])
+    E_imag = np.array(f['FieldData']['FD']['f0_imag'])
+    xf = np.array(f['Mesh']['x'])
+    yf = np.array(f['Mesh']['y'])
+    zf = np.array(f['Mesh']['z'])
 
-print("Dostępne pola:", mesh_vtk.array_names)
+E_complex = E_real +1j*E_imag
 
+e_mag_complex = np.sqrt(np.abs(E_complex[:,:,:,0])**2 + np.abs(E_complex[:,:,:,1])**2 + np.abs(E_complex[:,:,:,2])**2)
 
-# =========================
-# POLE E
-# =========================
-E = mesh_vtk['E-Field']   # wektor [Ex, Ey, Ez]
-E_mag = np.linalg.norm(E, axis=1)
-
-
-# =========================
-# SKALOWANIE DO MOCY NADAJNIKA
-# =========================
-P_tx = 25       # moc nadajnika [W]
-R_port = 50     # impedancja portu [Ohm]
-
-# RMS i peak dla tej mocy
-V_rms = np.sqrt(P_tx * R_port)
-V_peak = V_rms * np.sqrt(2)
-
-# Skala pola - zakładamy, że symulacja daje jednostkowe pobudzenie
-scale = V_peak / 1.0
-print(f"Skalowanie pola do {P_tx} W: {scale:.3f}")
-
-# Skaluje E i gęstość mocy
-E_mag = E_mag * scale
+p_tx = 25.0
+p_sim = np.real(p_in[0])
+if p_sim > 0:
+    scale = np.sqrt(p_tx / p_sim)
+else:
+    scale = 1.0
+    print("Moc < 0 skalowanie domyslne")
+    
+e_mag_scaled = e_mag_complex * scale
 
 
-points = mesh_vtk.points
-xv = points[:,0]
-yv = points[:,1]
-zv = points[:,2]
 
-# =========================
-# GĘSTOŚĆ MOCY
-# =========================
-eta0 = 377
-S = E_mag**2 / (2 * eta0)
+# wybór przekroju w wysokości z_target
+z_target = 1.5
+z_idx = np.argmin(np.abs(zf - z_target))
 
-# =========================
-# PRZEKRÓJ (1.5 m)
-# =========================
-mask = np.abs(zv - 1.5) < 0.05
+# przygotowanie punktów x,y i wartości e
+# dopasowanie siatki do danych pola
+xf_c = xf[:-1]
+yf_c = yf[:-1]
 
-x2 = xv[mask]
-y2 = yv[mask]
-E2 = E_mag[mask]
-S2 = S[mask]
+X, Y = np.meshgrid(xf_c, yf_c, indexing='ij')
+E_slice = e_mag_scaled[:, :, z_idx]
 
-# =========================
-# WYKRES E
-# =========================
-plt.figure(figsize=(8,6))
+# flatten
+x_flat = X.flatten()
+y_flat = Y.flatten()
+e_flat = E_slice.flatten()
 
-plt.tricontourf(x2, y2, E2, levels=50)
-plt.colorbar(label='E [V/m]')
+# dodatkowe zabezpieczenie
+assert len(x_flat) == len(e_flat)
 
-# =========================
-# GRANICE POKOJU
-# =========================
-plt.plot([-2, 2, 2, -2, -2], [0, 0, 2.5, 2.5, 0], 'white', linewidth=2)
+plt.figure(figsize=(10,7))
+levels_e = np.linspace(0, np.percentile(e_flat, 99), 60)
+cs = plt.tricontourf(x_flat, y_flat, e_flat, levels=levels_e, cmap='jet')
+plt.colorbar(cs, label='|E| V/m')
 
-# =========================
-# ŚCIANA (beton)
-# =========================
-plt.plot([-2, 2], [2.5, 2.5], 'cyan', linewidth=3, label='Ściana')
-
-# =========================
-# OKNO
-# =========================
-plt.plot([-0.5, 0.5, 0.5, -0.5, -0.5],
-         [2.5, 2.5, 2.75, 2.75, 2.5],
-         'green', linewidth=3, label='Okno')
-
-# =========================
-# ANTENA
-# =========================
-plt.scatter(antenna_x, antenna_y, c='blue', s=50, label='Antena')
-
-plt.legend()
-plt.title('Pole E (1.5 m)')
-plt.xlabel('X [m]')
-plt.ylabel('Y [m]')
-plt.xlim(-2.2, 2.2)
-plt.ylim(0, 4.0)
-
+# rysowanie okna, ściany i anteny
+plt.plot([-2,2,2,-2,-2], [0,0,wall_y,wall_y,0], 'white', linewidth=4, label='Pokoj')
+plt.plot([-2,2], [wall_y, wall_y], 'cyan', linewidth=3, label='Sciana')
+plt.plot([-2,2], [wall_y_outer, wall_y_outer], 'cyan', linewidth=3)
+plt.plot([-0.5,0.5], [wall_y + 0.125, wall_y + 0.125], 'lime', linewidth=4, label='Okno')
+plt.scatter(antenna_x_snapped, antenna_y_snapped, c='blue', s=60, zorder=10, label='Antena')
+plt.tight_layout()
 plt.show()
 
-# =========================
-# WYKRES S
-# =========================
-plt.figure(figsize=(8,6))
+eta0 = 377.0
+s_slice = e_slice**2 / (2*eta0)
 
-plt.tricontourf(x2, y2, S2, levels=50)
-plt.colorbar(label='S [W/m²]')
 
-# pokój
-plt.plot([-2, 2, 2, -2, -2], [0, 0, 2.5, 2.5, 0], 'white', linewidth=2)
 
-# ściana
-plt.plot([-2, 2], [2.5, 2.5], 'cyan', linewidth=3)
-
-# okno
-plt.plot([-0.5, 0.5, 0.5, -0.5, -0.5],
-         [2.5, 2.5, 2.75, 2.75, 2.5],
-         'green', linewidth=3)
-
-# antena
-plt.scatter(antenna_x, antenna_y, c='blue', s=50)
-
-plt.title('Gęstość mocy (1.5 m)')
-plt.xlabel('X [m]')
-plt.ylabel('Y [m]')
-plt.xlim(-2.2, 2.2)
-plt.ylim(0, 4.0)
-
-plt.show()
-
-# =========================
-# PRZEKROCZENIA
-# =========================
-limit = 2.0
-danger = S2 > limit
-
-plt.figure(figsize=(8,6))
-plt.scatter(x2[danger], y2[danger], c='red', s=5)
-plt.title('Przekroczenia normy ICNIRP')
-plt.xlabel('X [m]')
-plt.ylabel('Y [m]')
-plt.show()
